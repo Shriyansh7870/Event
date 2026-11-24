@@ -1,0 +1,95 @@
+# QR Pass
+
+Register online → get a signed QR pass → staff verify at the venue **offline** → check-ins sync when internet returns.
+Built for 5,000 attendees and multiple gate devices. No APK needed: the web app is an installable PWA.
+
+```
+server/   Node.js + Express + MongoDB API          (see server/README.md)
+web/      React + Vite + Tailwind PWA              (attendee pages + staff verifier + admin)
+CONTRACT.md  API contract shared by both
+```
+
+## Run locally
+
+```bash
+# 1) API — uses in-memory MongoDB with 50 demo users if MONGODB_URI is empty
+cd server && npm install && npm run dev        # http://localhost:4000/api
+
+# 2) Web app — proxies /api to :4000
+cd web && npm install && npm run dev           # http://localhost:5173
+```
+
+Default staff login (dev): `admin` / `admin123`. Change `ADMIN_PASSWORD` and set `JWT_SECRET` in `server/.env` for production.
+
+| Page | Who | URL |
+|---|---|---|
+| Landing / Register / My pass / Find pass | Attendees | `/`, `/register`, `/pass/:id`, `/find-pass` |
+| Staff login | Staff | `/staff/login` |
+| Offline QR verifier | Gate staff | `/verify` |
+| Dashboard, attendees, duplicates, CSV, staff | Admin | `/admin` |
+
+## Bulk registration (Admin → Bulk)
+1. **Download template** (`TeckFluenceX-attendees-template.xlsx`) — columns: Full Name, Mobile, Email, Organization.
+   Other header names (Name, Phone, E-mail, Company…) are recognised automatically; .xlsx, .xls and .csv are accepted.
+2. **Upload** the file → preview shows Ready / Error / Duplicate-in-file per row → **Register N attendees**.
+   Rows are sent in chunks of 500; already-registered emails/mobiles are skipped, never duplicated.
+3. **Results**: created / skipped / failed, with a downloadable error report (.xlsx).
+4. **Bulk download** passes for one upload batch or for everyone:
+   - **ZIP** of PNG passes (one per attendee, `TFX-XXXXXX_Name.png`) — ~54 KB each
+   - **PDF** for printing — 8 badges per A4 page with cut lines, or 1 per page
+   - **Excel** list with codes and personal pass links (to mail-merge / WhatsApp)
+
+Bulk-registered attendees are included in the gate phones' offline list on their next sync.
+
+## Event-day checklist (gate phones)
+1. Open the site on Wi-Fi, log in at `/staff/login`, name the device (e.g. "Gate 1"), and "Add to Home Screen".
+2. Wait until it shows the attendee count (e.g. "5000 attendees") — the list is now stored on the phone.
+3. Scan offline. Green = confirm entry, amber = already checked in, red = invalid/cancelled.
+4. When internet returns, sync is automatic (or tap **Sync**). Make sure **Pending = 0** before signing out.
+
+## Production
+- Host `web/` (build: `npm run build` → `dist/`) and `server/` behind **HTTPS** — the camera requires it.
+- Set `MONGODB_URI` (MongoDB Atlas free tier is enough for 5,000 users).
+- **Back up `server/keys/`** — the private key signs every QR pass; losing it invalidates all issued passes.
+- Duplicate entries across gates while offline can't be blocked in real time; they're flagged after sync in Admin → Check-ins.
+
+## Family registration — Namma Honda Habba
+
+Honda / Namma Honda Habba is the client event; TechfluenceX is the service provider.
+Public registration uses full name and mobile number, with no email field. Add up to
+5 additional adults (name and relationship) and 5 children (name). The primary
+registrant is separate from those limits. Every person gets their own code and QR pass, linked to the
+main registrant, and is checked in separately. At the gate, staff can tick other family members to check
+them in together. Cancelling the main registrant also cancels their guests' passes. Totals count people.
+Find a pass using the registered full name and mobile number.
+
+The API accepts optional email for compatibility; bulk Excel imports still require
+email. On startup, the old required-email unique index is replaced with a sparse
+unique index to support multiple registrations without email. Existing records
+and email-based API lookup remain supported.
+
+Admins can create login accounts under **Admin → Staff → Add staff**, choosing
+Admin or Verifier and an editable password prefilled with `Test123`. If an API
+request omits the password, it also defaults to `Test123`. Existing passwords do
+not change.
+
+## Send passes on WhatsApp
+
+**Admin → Attendees** lists every registered user (12 per page). Each row has a **Send** button that previews the pass.
+
+- **Without WhatsApp credentials (default):** copy the QR image, open the prefilled chat, paste and press send. On phones,
+  **Share image** attaches the QR directly. The message also has a personal pass link; set `PUBLIC_APP_URL` so it opens on other devices.
+- **One-click sending (WhatsApp Cloud API):** set `WHATSAPP_TOKEN` (a permanent system-user token), `WHATSAPP_PHONE_NUMBER_ID`,
+  `WHATSAPP_TEMPLATE` and `WHATSAPP_TEMPLATE_LANG` in `server/.env`, then restart. Meta must first approve a template with an
+  **Image header** and five body variables, in this order:
+
+  ```
+  Hello {{1}}, your entry pass for {{2}} is ready.
+  Pass code: {{3}}
+  Mobile: {{4}}
+  Guests: {{5}}
+  Please show this QR code at the entrance.
+  ```
+
+"Sent" means WhatsApp accepted the message; delivery and read receipts are not tracked. Meta charges per message and
+requires attendees' opt-in. 10-digit numbers get `WHATSAPP_COUNTRY_CODE` (91).
